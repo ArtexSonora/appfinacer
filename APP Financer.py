@@ -20,68 +20,93 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# CONFIGURAÇÕES GERAIS (MANTENDO AS SUAS)
-st.set_page_config(layout="wide")
-st.title("📈 Trading App - Binance Spot & Futuros")
+# 🔒 Defina sua senha aqui
+SENHA_CORRETA = "senha123"  # Troque por sua senha
 
-# VARIÁVEL PARA CONTROLAR A ATIVAÇÃO DO ROBÔ (MANTENDO A SUA)
-robo_ativo = st.sidebar.checkbox("Ativar Robô de Trading", value=False)
-# --- VARIAVEIS GLOBAIS ---
-client_spot = None
-client_futures = None
-info_troca = None
-oco_ordens_ativas = {}
-ordens_abertas = {}
-SIDE_BUY = 'BUY'
-SIDE_SELL = 'SELL'
+# Definindo as variáveis globais para API Key e Secret
+api_key = None
+api_secret = None
 
-# --- VARIAVEIS GLOBAIS ---
-# ... outras variáveis ...
-ordem_executada_recentemente = False
-tempo_inicio_cooldown = None
-tempo_cooldown_rapido = 300 # <---- AGORA O COOLDOWN É DE 300 SEGUNDOS (5 MINUTOS)
-# ...
-# CLIENTES DA BINANCE (com reconexão automática)
-client_spot = None
-client_futures = None
+def check_password():
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
 
-# Parâmetros de retry
-MAX_RETRIES = 5
-RETRY_DELAY = 20  # segundos
+    if not st.session_state["password_correct"]:
+        senha = st.text_input("Digite a senha para acessar o app:", type="password")
+        if st.button("Entrar"):
+            if senha == SENHA_CORRETA:
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.error("Senha incorreta. Tente novamente.")
+        return False
+    else:
+        return True
 
-def criar_cliente_binance(api_key, api_secret, max_retries=MAX_RETRIES, delay=RETRY_DELAY):
-    for tentativa in range(max_retries):
-        try:
-            client_spot = Client(api_key, api_secret)
-            # Testa uma chamada simples para verificar conexão
-            client_spot.ping()
-            return client_spot
-        except Exception as e:
-            st.warning(f"Tentativa {tentativa+1} falhou: {e}")
-            time.sleep(delay)
-    st.error("Não foi possível conectar ao cliente SPOT da Binance após várias tentativas.")
-    return None
+# Se a senha estiver correta, o app é liberado
+if check_password():
+    # CONFIGURAÇÕES GERAIS
+    st.set_page_config(layout="wide")
+    st.title("📈 Trading App - Binance Spot & Futuros")
 
-def criar_cliente_futures(api_key, api_secret, max_retries=MAX_RETRIES, delay=RETRY_DELAY):
-    for tentativa in range(max_retries):
-        try:
-            client_futures = Client(api_key, api_secret)
-            # Testa uma chamada simples para verificar conexão
-            client_futures.futures_ping()
-            return client_futures
-        except Exception as e:
-            st.warning(f"Tentativa {tentativa+1} falhou: {e}")
-            time.sleep(delay)
-    st.error("Não foi possível conectar ao cliente FUTURES da Binance após várias tentativas.")
-    return None
+    # VARIÁVEL PARA CONTROLAR A ATIVAÇÃO DO ROBÔ
+    robo_ativo = st.sidebar.checkbox("Ativar Robô de Trading", value=False)
+    # --- VARIAVEIS GLOBAIS ---
+    client_spot = None
+    client_futures = None
+    info_troca = None
+    oco_ordens_ativas = {}
+    ordens_abertas = {}
+    SIDE_BUY = 'BUY'
+    SIDE_SELL = 'SELL'
 
-# Entrada do usuário
-api_key = st.sidebar.text_input("API Key", type="password")
-api_secret = st.sidebar.text_input("API Secret", type="password")
+    # --- VARIAVEIS GLOBAIS ---
+    # ... outras variáveis ...
+    ordem_executada_recentemente = False
+    tempo_inicio_cooldown = None
+    tempo_cooldown_rapido = 300 # <---- AGORA O COOLDOWN É DE 300 SEGUNDOS (5 MINUTOS)
+    # ...
+    # CLIENTES DA BINANCE (com reconexão automática)
+    client_spot = None
+    client_futures = None
 
-if api_key and api_secret:
-    client_spot = criar_cliente_binance(api_key, api_secret)
-    client_futures = criar_cliente_futures(api_key, api_secret)
+    # Parâmetros de retry
+    MAX_RETRIES = 5
+    RETRY_DELAY = 20  # segundos
+
+    def criar_cliente_binance(api_key, api_secret, max_retries=MAX_RETRIES, delay=RETRY_DELAY):
+        for tentativa in range(max_retries):
+            try:
+                client_spot = Client(api_key, api_secret)
+                # Testa uma chamada simples para verificar conexão
+                client_spot.ping()
+                return client_spot
+            except Exception as e:
+                st.warning(f"Tentativa {tentativa+1} falhou: {e}")
+                time.sleep(delay)
+        st.error("Não foi possível conectar ao cliente SPOT da Binance após várias tentativas.")
+        return None
+
+    def criar_cliente_futures(api_key, api_secret, max_retries=MAX_RETRIES, delay=RETRY_DELAY):
+        for tentativa in range(max_retries):
+            try:
+                client_futures = Client(api_key, api_secret)
+                # Testa uma chamada simples para verificar conexão
+                client_futures.futures_ping()
+                return client_futures
+            except Exception as e:
+                st.warning(f"Tentativa {tentativa+1} falhou: {e}")
+                time.sleep(delay)
+        st.error("Não foi possível conectar ao cliente FUTURES da Binance após várias tentativas.")
+        return None
+
+    # Entrada do usuário
+    api_key = st.sidebar.text_input("API Key", type="password")
+    api_secret = st.sidebar.text_input("API Secret", type="password")
+
+    if api_key and api_secret:
+        client_spot = criar_cliente_binance(api_key, api_secret)
+        client_futures = criar_cliente_futures(api_key, api_secret)
 
 # DICIONÁRIO PARA ARMAZENAR AS ORDENS OCO ATIVAS
 oco_ordens_ativas = {}
