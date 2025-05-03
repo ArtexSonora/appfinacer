@@ -1,0 +1,5 @@
+timestamp,symbol,side,price,quantity,stop_loss,take_profit,oco,modo
+2025-04-17 09:19:30,MANAUSDT,SELL,0.2674,3.0,,,True,Simulado
+2025-04-17 09:21:12,MANAUSDT,SELL,0.2679,3.0,,,False,Simulado
+2025-04-17 09:21:56,MANAUSDT,BUY,0.268,3.0,1.0,2.0,False,Simulado
+2025-04-17 18:36:52,MANAUSDT,BUY,0.2716,19.0,2.5,5.0,True,Simulado
