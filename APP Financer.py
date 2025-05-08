@@ -19,6 +19,7 @@ import math
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from scipy.signal import argrelextrema
 
 # 🔒 Defina sua senha aqui
 SENHA_CORRETA = "senha123"  # Troque por sua senha
@@ -107,9 +108,11 @@ if check_password():
     if api_key and api_secret:
         client_spot = criar_cliente_binance(api_key, api_secret)
         client_futures = criar_cliente_futures(api_key, api_secret)
-
 # DICIONÁRIO PARA ARMAZENAR AS ORDENS OCO ATIVAS
 oco_ordens_ativas = {}
+
+def main():
+    st.title("Trading App com Estratégias")
 
 # FUNÇÕES PARA OBTER DADOS, CALCULAR INDICADORES, PLOTAR GRÁFICO, OBTER SALDO, ETC. (RESTAURANDO AS SUAS)
 def obter_dados(par, intervalo, limite=100, mercado="Spot"):
@@ -132,6 +135,12 @@ def obter_dados(par, intervalo, limite=100, mercado="Spot"):
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
         df = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
+
+        # *** VERIFICAÇÃO DAS COLUNAS 'high' e 'low' AQUI DENTRO DA FUNÇÃO obter_dados ***
+        if 'high' not in df.columns or 'low' not in df.columns:
+            st.error(f"Erro: As colunas 'high' e 'low' não foram encontradas nos dados obtidos da Binance ({mercado}).")
+            return pd.DataFrame() # Retorna um DataFrame vazio para indicar erro
+
         return df
     except BinanceAPIException as e:
         st.error(f"Erro ao obter dados da Binance ({mercado}): {e}")
@@ -176,6 +185,30 @@ def calcular_indicadores(df):
 
     return df
 
+      # ... (seu código para seleção de par, timeframe, nível de risco) ...
+
+    df = obter_dados(par_selecionado, intervalo_selecionado)
+    if not df.empty:
+        # Calcular indicadores necessários para as estratégias
+        df['MM200'] = df['close'].rolling(window=200).mean()
+        df['EMA400'] = df['close'].ewm(span=400, adjust=False).mean()
+        df['RSI'] = ta.rsi(df['close'], window=config_risco['rsi_periodo'])
+        macd = ta.macd(df['close'], window_fast=12, window_slow=26, window_sign=9)
+        df['MACD'] = macd['macd']
+        df['Signal_MACD'] = macd['macd_signal']
+        df['Histograma_MACD'] = macd['macd_diff']
+        bb = ta.bbands(df['close'], window=config_risco['bb_periodo'], std=config_risco['bb_desvio'])
+        df['BB_Superior'] = bb['bb_h']
+        df['BB_Inferior'] = bb['bb_l']
+        df['BB_Media'] = bb['bb_mavg']
+
+        sinal = tomar_decisao(df.copy(), estrategia_selecionada, nivel_risco_selecionado)
+        st.subheader(f"Sinal de Trading ({estrategia_selecionada}): {sinal}")
+
+        # ... (seu código para exibir gráficos, informações adicionais, etc.) ...
+
+if __name__ == "__main__":
+    main()
 def plotar_grafico(df, usar_mm, usar_rsi, usar_macd, usar_bb, exibir_mm200_grafico, exibir_ema400_grafico, exibir_medias_rapidas):
     rows = 1 + (1 if usar_rsi and 'RSI' in df.columns else 0) + (
         1 if usar_macd and 'MACD' in df.columns and 'Signal_MACD' in df.columns and 'Histograma_MACD' in df.columns else 0)
@@ -395,15 +428,23 @@ def calcular_resultado_simulado(symbol):
 
 # ----------- NOVAS SEÇÕES PARA ESTRATÉGIAS E GERENCIAMENTO DE RISCO -----------
 
-# CONFIGURAÇÕES DE RISCO (MANTENDO AS SUAS)
+# CONFIGURAÇÕES DE RISCO
 niveis_risco = {
     "Suave": {"mm_rapida": 9, "mm_lenta": 21, "rsi_limites": (30, 70), "sl_tp_ratio": (0.5, 2)},
     "Moderado": {"mm_rapida": 12, "mm_lenta": 26, "rsi_limites": (35, 65), "sl_tp_ratio": (0.75, 1.5)},
     "Profissional": {"mm_rapida": 20, "mm_lenta": 50, "rsi_limites": (40, 60), "sl_tp_ratio": (1, 2)},
     "Agressivo": {"mm_rapida": 5, "mm_lenta": 15, "rsi_limites": (25, 75), "sl_tp_ratio": (1, 3)},
+    "Lara": {
+        "lara_ordem_picos_fundos": 5,
+        "lara_tolerancia_altura_dt": 0.005,
+        "lara_tolerancia_distancia_dt": 10,
+        "lara_tolerancia_altura_hocoi": 0.02,
+        "lara_tolerancia_distancia_hocoi": 20,
+        "lara_tolerancia_angulo_cw": 0.1
+    }
 }
 
-# INPUTS DO USUÁRIO (MANTENDO AS SUAS)
+# INPUTS DO USUÁRIO
 with st.sidebar:
     st.subheader("⚙️ Configurações")
     modo_operacao = st.selectbox("Modo de Operação", ["Simulado", "Real"])
@@ -426,9 +467,9 @@ with st.sidebar:
     st.subheader("🤖 Estratégia")
     estrategia_ativa = st.selectbox("Selecione a Estratégia:",
                                     ["MM Cruzamento", "RSI (Toque nas Extremidades)", "MACD Cruzamento",
-                                     "Bandas de Bollinger (Toque)", "Confluência Manual", "Cruzamento MM + BB Fluxo"])
+                                     "Bandas de Bollinger (Toque)", "Lara Reversao", "Confluência Manual", "Cruzamento MM + BB Fluxo"])
     usar_confirmacao_rsi_compra = st.checkbox("Usar Confirmação RSI Compra (50-70)", value=False)
-    usar_confirmacao_rsi_venda = st.sidebar.checkbox("Usar Confirmação RSI Venda (30-50)", value=False)  # <--- ADICIONE ESTA LINHA
+    usar_confirmacao_rsi_venda = st.sidebar.checkbox("Usar Confirmação RSI Venda (30-50)", value=False)
     usar_confirmacao_volume = st.checkbox("Confirmar entrada com volume 20% acima do candle anterior", value=False)
     usar_filtro_mm200_global = st.checkbox("Usar Filtro MM200")
     usar_filtro_ema400_global = st.checkbox("Usar Filtro EMA400")
@@ -438,17 +479,18 @@ with st.sidebar:
     usar_confluencia_rsi = st.checkbox("Usar RSI na Confluência", value=False)
     usar_confluencia_macd = st.checkbox("Usar MACD na Confluência", value=False)
     usar_confluencia_bb = st.checkbox("Usar BB na Confluência", value=False)
+    usar_confluencia_lara = st.checkbox("Usar Padrões Lara na Confluência", value=False) # Checkbox de confluência para Lara
 
     st.subheader("⚙️ Configurações Futuros")
-    alavancagem = st.slider("Alavancagem", min_value=1, max_value=125, value=1, step=1, key='alavancagem')  # Barra deslizante de 1x a 125x, começando em 1x, com passos de 1
+    alavancagem = st.slider("Alavancagem", min_value=1, max_value=125, value=1, step=1, key='alavancagem')
 
-    nivel_risco = st.selectbox("Nível de Risco", ["Suave", "Moderado", "Profissional", "Agressivo"])
+    nivel_risco = st.selectbox("Nível de Risco", ["Suave", "Moderado", "Profissional", "Agressivo", "Lara"]) # Adicionando "Lara"
     quantidade_trade_pct = st.number_input("Quantidade por Trade (%) da Banca", min_value=0.01, max_value=100.0,
                                            value=1.0, step=0.01)
     definir_sl_tp_manualmente = st.checkbox("Definir Stop Loss/Take Profit Manualmente")
     if definir_sl_tp_manualmente:
-        sl_padrao = float(niveis_risco[nivel_risco]["sl_tp_ratio"][0])
-        tp_padrao = float(niveis_risco[nivel_risco]["sl_tp_ratio"][1])
+        sl_padrao = float(niveis_risco[nivel_risco]["sl_tp_ratio"][0]) if nivel_risco in niveis_risco and "sl_tp_ratio" in niveis_risco[nivel_risco] else 1.0
+        tp_padrao = float(niveis_risco[nivel_risco]["sl_tp_ratio"][1]) if nivel_risco in niveis_risco and "sl_tp_ratio" in niveis_risco[nivel_risco] else 2.0
         stop_loss_manual = st.number_input("Stop Loss (%)", min_value=0.01, step=0.01, value=sl_padrao)
         take_profit_manual = st.number_input("Take Profit (%)", min_value=0.01, step=0.01, value=tp_padrao)
     else:
@@ -459,21 +501,32 @@ with st.sidebar:
     config_atual = niveis_risco[nivel_risco]
     if usar_mm:
         st.markdown(f"**Média Móvel:**")
-        st.markdown(f"- Rápida: {config_atual['mm_rapida']}")
-        st.markdown(f"- Lenta: {config_atual['mm_lenta']}")
+        st.markdown(f"- Rápida: {config_atual.get('mm_rapida', '-')}")
+        st.markdown(f"- Lenta: {config_atual.get('mm_lenta', '-')}")
     if usar_rsi:
         st.markdown(f"**RSI:**")
-        st.markdown(f"- Limite Inferior: {config_atual['rsi_limites'][0]}")
-        st.markdown(f"- Limite Superior: {config_atual['rsi_limites'][1]}")
+        st.markdown(f"- Limite Inferior: {config_atual.get('rsi_limites', ('-', '-'))[0]}")
+        st.markdown(f"- Limite Superior: {config_atual.get('rsi_limites', ('-', '-'))[1]}")
     if usar_macd:
         st.markdown(f"**MACD:**")
-        st.markdown("- EMA Rápida: 12")  # Valores padrão
-        st.markdown("- EMA Lenta: 26")   # Valores padrão
-        st.markdown("- Sinal EMA: 9")    # Valores padrão
+        st.markdown("- EMA Rápida: 12")
+        st.markdown("- EMA Lenta: 26")
+        st.markdown("- Sinal EMA: 9")
     if usar_bb:
         st.markdown(f"**Bandas de Bollinger:**")
-        st.markdown("- Período: 20")      # Valor padrão
-        st.markdown("- Desvio Padrão: 2") # Valor padrão
+        st.markdown("- Período: 20")
+        st.markdown("- Desvio Padrão: 2")
+    if estrategia_ativa == "Lara Reversao":
+        st.markdown("**Padrões de Reversão de Lara:**")
+        st.markdown("- Ordem para picos/fundos: 5 (padrão)") # Informando o parâmetro
+        st.markdown("- Tolerância de altura (Dobro Topo/Fundo): 0.5% (padrão)")
+        st.markdown("- Tolerância de distância (Dobro Topo/Fundo): 10 candles (padrão)")
+        st.markdown("- Tolerância de altura (Ombro/Cabeça): 2% (padrão)")
+        st.markdown("- Tolerância de distância (Ombros): 20 candles (padrão)")
+        st.markdown("- Tolerância de altura (Triplo Topo/Fundo): 0.5% (padrão)")
+        st.markdown("- Tolerância de distância (Triplo Topo/Fundo): 20 candles (padrão)")
+        st.markdown("- Tolerância de ângulo (Cunha): 0.1 (padrão)")
+
 
 # FUNÇÕES PARA GERAR SINAIS DE ESTRATÉGIA (MANTENDO AS SUAS)
 def gerar_sinal_mm_cruzamento(df, rapida, lenta):
@@ -701,6 +754,180 @@ def gerar_sinal_mm_bb_fluxo(df):
 
     return sinal
 
+def identificar_picos_e_fundos(df, ordem=5):
+    """Identifica picos e fundos locais em uma série temporal."""
+    if len(df) < ordem * 2 + 1:
+        return np.array([]), np.array([])
+    picos_idx = argrelextrema(df['high'].values, np.greater, order=ordem)[0]
+    fundos_idx = argrelextrema(df['low'].values, np.less, order=ordem)[0]
+    return picos_idx, fundos_idx
+
+def verificar_dobro_topo(df, picos_idx, tolerancia_altura=0.005, tolerancia_distancia=10):
+    """Verifica a formação de Dobro Topo."""
+    if len(picos_idx) < 2:
+        return None
+    for i in range(len(picos_idx) - 1):
+        pico1_idx = picos_idx[i]
+        pico2_idx = picos_idx[i+1]
+        if abs(df['high'].iloc[pico1_idx] - df['high'].iloc[pico2_idx]) < tolerancia_altura * df['high'].iloc[pico1_idx] and \
+           abs(pico1_idx - pico2_idx) > 1 and abs(pico1_idx - pico2_idx) < tolerancia_distancia:
+            # Encontrar o vale entre os picos
+            vale_start = min(pico1_idx, pico2_idx)
+            vale_end = max(pico1_idx, pico2_idx)
+            if vale_end - vale_start > 1:
+                vale_idx = df['low'].iloc[vale_start+1:vale_end].idxmin()
+                return pico1_idx, pico2_idx, df.index.get_loc(vale_idx)
+    return None
+
+def verificar_dobro_fundo(df, fundos_idx, tolerancia_altura=0.005, tolerancia_distancia=10):
+    """Verifica a formação de Dobro Fundo."""
+    if len(fundos_idx) < 2:
+        return None
+    for i in range(len(fundos_idx) - 1):
+        fundo1_idx = fundos_idx[i]
+        fundo2_idx = fundos_idx[i+1]
+        if abs(df['low'].iloc[fundo1_idx] - df['low'].iloc[fundo2_idx]) < tolerancia_altura * df['low'].iloc[fundo1_idx] and \
+           abs(fundo1_idx - fundo2_idx) > 1 and abs(fundo1_idx - fundo2_idx) < tolerancia_distancia:
+            # Encontrar o pico entre os fundos
+            pico_start = min(fundo1_idx, fundo2_idx)
+            pico_end = max(fundo1_idx, fundo2_idx)
+            if pico_end - pico_start > 1:
+                pico_idx = df['high'].iloc[pico_start+1:pico_end].idxmax()
+                return fundo1_idx, fundo2_idx, df.index.get_loc(pico_idx)
+    return None
+
+def verificar_cabeca_ombros(df, picos_idx, tolerancia_altura_ombro_cabeca=0.02, tolerancia_distancia_ombros=20):
+    """Verifica a formação de Cabeça e Ombros."""
+    if len(picos_idx) < 3:
+        return None
+    for i in range(1, len(picos_idx) - 1):
+        om1_idx = picos_idx[i-1]
+        cabeca_idx = picos_idx[i]
+        om2_idx = picos_idx[i+1]
+        if om1_idx < cabeca_idx < om2_idx and \
+           abs(df['high'].iloc[om1_idx] - df['high'].iloc[om2_idx]) < tolerancia_altura_ombro_cabeca * df['high'].iloc[cabeca_idx] and \
+           df['high'].iloc[cabeca_idx] > df['high'].iloc[om1_idx] and df['high'].iloc[cabeca_idx] > df['high'].iloc[om2_idx] and \
+           abs(om1_idx - om2_idx) < tolerancia_distancia_ombros:
+            # Encontrar a linha de pescoço (suporte)
+            pescoco1_start = min(om1_idx, cabeca_idx)
+            pescoco1_end = max(om1_idx, cabeca_idx)
+            if pescoco1_end - pescoco1_start > 0:
+                pescoco1_idx = df['low'].iloc[pescoco1_start:pescoco1_end].idxmax() # Máxima entre ombro1 e cabeça
+
+            pescoco2_start = min(cabeca_idx, om2_idx)
+            pescoco2_end = max(cabeca_idx, om2_idx)
+            if pescoco2_end - pescoco2_start > 0:
+                pescoco2_idx = df['low'].iloc[pescoco2_start:pescoco2_end].idxmax() # Máxima entre cabeça e ombro2
+
+            return om1_idx, cabeca_idx, om2_idx, df.index.get_loc(pescoco1_idx), df.index.get_loc(pescoco2_idx)
+    return None
+
+def verificar_cabeca_ombros_invertido(df, fundos_idx, tolerancia_altura_ombro_cabeca=0.02, tolerancia_distancia_ombros=20):
+    """Verifica a formação de Cabeça e Ombros Invertido."""
+    if len(fundos_idx) < 3:
+        return None
+    for i in range(1, len(fundos_idx) - 1):
+        om1_idx = fundos_idx[i-1]
+        cabeca_idx = fundos_idx[i]
+        om2_idx = fundos_idx[i+1]
+        if om1_idx < cabeca_idx < om2_idx and \
+           abs(df['low'].iloc[om1_idx] - df['low'].iloc[om2_idx]) < tolerancia_altura_ombro_cabeca * df['low'].iloc[cabeca_idx] and \
+           df['low'].iloc[cabeca_idx] < df['low'].iloc[om1_idx] and df['low'].iloc[cabeca_idx] < df['low'].iloc[om2_idx] and \
+           abs(om1_idx - om2_idx) < tolerancia_distancia_ombros:
+            # Encontrar a linha de pescoço (resistência)
+            pescoco1_start = min(om1_idx, cabeca_idx)
+            pescoco1_end = max(om1_idx, cabeca_idx)
+            if pescoco1_end - pescoco1_start > 0:
+                pescoco1_idx = df['high'].iloc[pescoco1_start:pescoco1_end].idxmax() # Máxima entre ombro1 e cabeça
+
+            pescoco2_start = min(cabeca_idx, om2_idx)
+            pescoco2_end = max(cabeca_idx, om2_idx)
+            if pescoco2_end - pescoco2_start > 0:
+                pescoco2_idx = df['high'].iloc[pescoco2_start:pescoco2_end].idxmax() # Máxima entre cabeça e ombro2
+
+            return om1_idx, cabeca_idx, om2_idx, df.index.get_loc(pescoco1_idx), df.index.get_loc(pescoco2_idx)
+    return None
+
+def verificar_triplo_topo(df, picos_idx, tolerancia_altura=0.005, tolerancia_distancia=20):
+    """Verifica a formação de Triplo Topo."""
+    if len(picos_idx) < 3:
+        return None
+    for i in range(len(picos_idx) - 2):
+        p1_idx = picos_idx[i]
+        p2_idx = picos_idx[i+1]
+        p3_idx = picos_idx[i+2]
+        if abs(df['high'].iloc[p1_idx] - df['high'].iloc[p2_idx]) < tolerancia_altura * df['high'].iloc[p1_idx] and \
+           abs(df['high'].iloc[p1_idx] - df['high'].iloc[p3_idx]) < tolerancia_altura * df['high'].iloc[p1_idx] and \
+           p1_idx < p2_idx < p3_idx and \
+           abs(p1_idx - p3_idx) < tolerancia_distancia:
+            # Encontrar os vales entre os picos
+            v1_start = min(p1_idx, p2_idx)
+            v1_end = max(p1_idx, p2_idx)
+            v2_start = min(p2_idx, p3_idx)
+            v2_end = max(p2_idx, p3_idx)
+            if v1_end - v1_start > 0 and v2_end - v2_start > 0:
+                v1_idx = df['low'].iloc[v1_start+1:v1_end].idxmin()
+                v2_idx = df['low'].iloc[v2_start+1:v2_end].idxmin()
+                return p1_idx, p2_idx, p3_idx, df.index.get_loc(v1_idx), df.index.get_loc(v2_idx)
+    return None
+
+def verificar_triplo_fundo(df, fundos_idx, tolerancia_altura=0.005, tolerancia_distancia=20):
+    """Verifica a formação de Triplo Fundo."""
+    if len(fundos_idx) < 3:
+        return None
+    for i in range(len(fundos_idx) - 2):
+        f1_idx = fundos_idx[i]
+        f2_idx = fundos_idx[i+1]
+        f3_idx = fundos_idx[i+2]
+        if abs(df['low'].iloc[f1_idx] - df['low'].iloc[f2_idx]) < tolerancia_altura * df['low'].iloc[f1_idx] and \
+           abs(df['low'].iloc[f1_idx] - df['low'].iloc[f3_idx]) < tolerancia_altura * df['low'].iloc[f1_idx] and \
+           f1_idx < f2_idx < f3_idx and \
+           abs(f1_idx - f3_idx) < tolerancia_distancia:
+            # Encontrar os picos entre os fundos
+            p1_start = min(f1_idx, f2_idx)
+            p1_end = max(f1_idx, f2_idx)
+            p2_start = min(f2_idx, f3_idx)
+            p2_end = max(f2_idx, f3_idx)
+            if p1_end - p1_start > 0 and p2_end - p2_start > 0:
+                p1_idx = df['high'].iloc[p1_start+1:p1_end].idxmax()
+                p2_idx = df['high'].iloc[p2_start+1:p2_end].idxmax()
+                return f1_idx, f2_idx, f3_idx, df.index.get_loc(p1_idx), df.index.get_loc(p2_idx)
+    return None
+
+def verificar_falling_wedge(df, ordem=5, tolerancia_angulo=0.1):
+    """Verifica a formação de Cunha de Queda."""
+    picos_idx, _ = identificar_picos_e_fundos(df, ordem=ordem)
+    if len(picos_idx) < 2:
+        return None
+    picos_idx = sorted(picos_idx[-5:]) # Analisar os últimos picos
+    if len(picos_idx) < 2:
+        return None
+
+    pico1_idx = picos_idx[0]
+    pico2_idx = picos_idx[-1]
+
+    if pico1_idx < pico2_idx:
+        # Calcular inclinação da linha de resistência
+        delta_t = pico2_idx - pico1_idx
+        delta_p = df['high'].iloc[pico2_idx] - df['high'].iloc[pico1_idx]
+        inclinacao_resistencia = delta_p / delta_t
+
+        # Encontrar fundos correspondentes
+        _, fundos_idx = identificar_picos_e_fundos(df, ordem=ordem)
+        fundos_idx = sorted([f for f in fundos_idx if f > pico1_idx and f < pico2_idx])
+        if len(fundos_idx) >= 2:
+            fundo1_idx = min(fundos_idx)
+            fundo2_idx = max(fundos_idx)
+            if fundo1_idx < fundo2_idx:
+                delta_t_f = fundo2_idx - fundo1_idx
+                delta_p_f = df['low'].iloc[fundo2_idx] - df['low'].iloc[fundo1_idx]
+                inclinacao_suporte = delta_p_f / delta_t_f
+
+                # Verificar se ambas as linhas são descendentes e convergentes
+                if inclinacao_resistencia < 0 and inclinacao_suporte < 0 and inclinacao_resistencia > inclinacao_suporte and abs(inclinacao_resistencia - inclinacao_suporte) < tolerancia_angulo:
+                    return pico1_idx, pico2_idx, fundo1_idx, fundo2_idx
+    return None
+
 # FUNÇÃO PRINCIPAL PARA GERENCIAR AS ORDENS ABERTAS E AJUSTAR O STOP LOSS
 def gerenciar_ordens_abertas(usar_trailing_stop, trailing_stop_lookback, trailing_stop_offset_pct=None ):
     global ordens_abertas
@@ -851,6 +1078,13 @@ def tomar_decisao(df, estrategia, nivel_risco):
     sinal_final = "Neutro"
     sinais = []
 
+    ordem_picos_fundos = config.get('lara_ordem_picos_fundos', 5)
+
+    print("Chamando identificar_picos_e_fundos...")
+    picos_idx, fundos_idx = identificar_picos_e_fundos(df, ordem_picos_fundos)
+    print(f"picos_idx após chamada: {picos_idx}")
+    print(f"fundos_idx após chamada: {fundos_idx}")
+
     if estrategia == "MM Cruzamento" and usar_mm:
         df['MM_Rapida'] = df['close'].rolling(window=config['mm_rapida']).mean()
         df['MM_Lenta'] = df['close'].rolling(window=config['mm_lenta']).mean()
@@ -942,6 +1176,63 @@ def tomar_decisao(df, estrategia, nivel_risco):
             sinais.append(sinais_bb)
         elif not usar_confluencia_manual:
             sinal_final = sinais_bb
+
+    elif estrategia == "Lara Reversao":
+        sinal_lara = "Neutro"
+        tolerancia_altura_dt = config.get('lara_tolerancia_altura_dt', 0.005)
+        tolerancia_distancia_dt = config.get('lara_tolerancia_distancia_dt', 10)
+        tolerancia_altura_hocoi = config.get('lara_tolerancia_altura_hocoi', 0.02)
+        tolerancia_distancia_hocoi = config.get('lara_tolerancia_distancia_hocoi', 20)
+        tolerancia_angulo_cw = config.get('lara_tolerancia_angulo_cw', 0.1)
+
+        # Verificar padrões em ordem de prioridade e confirmação
+
+        dt_padrao = verificar_dobro_topo(df, picos_idx, tolerancia_altura_dt, tolerancia_distancia_dt)
+        if dt_padrao and df['close'].iloc[-1] < df['low'].iloc[dt_padrao[2]]:
+            sinal_lara = "Venda"
+            st.info(f"Dobro Topo detectado. Rompimento em {df.index[dt_padrao[2]]}")
+
+        elif df_padrao := verificar_dobro_fundo(df, fundos_idx, tolerancia_altura_dt, tolerancia_distancia_dt):
+            if df['close'].iloc[-1] > df['high'].iloc[df_padrao[2]]:
+                sinal_lara = "Compra"
+                st.info(f"Dobro Fundo detectado. Rompimento em {df.index[df_padrao[2]]}")
+
+        elif hs_padrao := verificar_cabeca_ombros(df, picos_idx, tolerancia_altura_hocoi, tolerancia_distancia_hocoi):
+            pescoco = min(df['low'].iloc[hs_padrao[3]], df['low'].iloc[hs_padrao[4]])
+            if df['close'].iloc[-1] < pescoco:
+                sinal_lara = "Venda"
+                st.info(f"Cabeça e Ombros detectado. Rompimento da linha de pescoço em {pescoco:.2f}")
+
+        elif hsi_padrao := verificar_cabeca_ombros_invertido(df, fundos_idx, tolerancia_altura_hocoi,
+                                                             tolerancia_distancia_hocoi):
+            pescoco = max(df['high'].iloc[hsi_padrao[3]], df['high'].iloc[hsi_padrao[4]])
+            if df['close'].iloc[-1] > pescoco:
+                sinal_lara = "Compra"
+                st.info(f"Cabeça e Ombros Invertido detectado. Rompimento da linha de pescoço em {pescoco:.2f}")
+
+        elif tt_padrao := verificar_triplo_topo(df, picos_idx, tolerancia_altura_dt, tolerancia_distancia_dt):
+            rompimento = max(df['low'].iloc[tt_padrao[3]], df['low'].iloc[tt_padrao[4]])
+            if df['close'].iloc[-1] < rompimento:
+                sinal_lara = "Venda"
+                st.info(f"Triplo Topo detectado. Rompimento abaixo de {rompimento:.2f}")
+
+        elif tf_padrao := verificar_triplo_fundo(df, fundos_idx, tolerancia_altura_dt, tolerancia_distancia_dt):
+            rompimento = min(df['high'].iloc[tf_padrao[3]], df['high'].iloc[tf_padrao[4]])
+            if df['close'].iloc[-1] > rompimento:
+                sinal_lara = "Compra"
+                st.info(f"Triplo Fundo detectado. Rompimento acima de {rompimento:.2f}")
+
+        elif cw_padrao := verificar_falling_wedge(df, ordem_picos_fundos, tolerancia_angulo_cw):
+            resistencia = df['high'].iloc[cw_padrao[1]]
+            if df['close'].iloc[-1] > resistencia:
+                sinal_lara = "Compra"
+                st.info(f"Cunha de Queda detectada. Rompimento acima de {resistencia:.2f}")
+
+        # Confluência
+        if usar_confluencia_lara and sinal_lara != "Neutro":
+            sinais.append(sinal_lara)
+        elif not usar_confluencia_manual:
+            sinal_final = sinal_lara
 
     if estrategia == "Confluência Manual" and sinais:
         compras = sinais.count("Compra")
@@ -1520,9 +1811,11 @@ st.markdown("---")
 st.caption("App de trading com integração Binance (Spot & Futuros) desenvolvido com Streamlit.")
 
 # Atualização de página a cada N segundos (opcional)
-tempo_atualizacao = 60  # Atualizar a cada 60 segundos
+tempo_atualizacao = 30  # Atualizar a cada 30 segundos
 time.sleep(tempo_atualizacao)
 st.rerun()
+
+
 
 
 
