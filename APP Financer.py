@@ -856,23 +856,15 @@ def tomar_decisao(df, estrategia, nivel_risco):
         df['MM_Lenta'] = df['close'].rolling(window=config['mm_lenta']).mean()
         sinais_mm = gerar_sinal_mm_cruzamento(df, config['mm_rapida'], config['mm_lenta'])
 
-        preco_atual = df['close'].iloc[-1]
-        mm200 = df['MM200'].iloc[-1]
-
         if usar_confluencia_mm:
-            if sinais_mm == "Compra" and preco_atual > mm200:
+            if sinais_mm == "Compra":
                 sinais.append("Compra")
-            elif sinais_mm == "Venda" and preco_atual < mm200:
+            elif sinais_mm == "Venda":
                 sinais.append("Venda")
             else:
                 sinais.append("Neutro")  # Ou talvez não adicionar nada à lista de sinais
-        elif not usar_confluencia_manual:  # Se não estiver em confluência manual, usa o sinal individual com filtro
-            if sinais_mm == "Compra" and preco_atual > mm200:
-                sinal_final = "Compra"
-            elif sinais_mm == "Venda" and preco_atual < mm200:
-                sinal_final = "Venda"
-            else:
-                sinal_final = "Neutro"
+        elif not usar_confluencia_manual:  # Se não estiver em confluência manual, usa o sinal individual
+            sinal_final = sinais_mm
     if estrategia == "RSI (Toque nas Extremidades)" and usar_rsi:
         sinal_extremidades = gerar_sinal_rsi_extremidades(df, config['rsi_limites'][0], config['rsi_limites'][1])
         sinal_divergencia = verificar_divergencia_rsi(df)
