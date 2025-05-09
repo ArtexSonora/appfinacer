@@ -1811,7 +1811,7 @@ st.markdown("---")
 st.caption("App de trading com integração Binance (Spot & Futuros) desenvolvido com Streamlit.")
 
 # Atualização de página a cada N segundos (opcional)
-tempo_atualizacao = 30  # Atualizar a cada 30 segundos
+tempo_atualizacao = 45  # Atualizar a cada 30 segundos
 time.sleep(tempo_atualizacao)
 st.rerun()
 
