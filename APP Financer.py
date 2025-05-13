@@ -67,13 +67,16 @@ if check_password():
     st.set_page_config(layout="wide")
     st.title("📈 Trading App - Binance Spot & Futuros")
 
-if 'robo_ativo_checkbox' not in st.session_state:
-    st.session_state['robo_ativo_checkbox'] = False
-
 st.sidebar.checkbox("Ativar Robô de Trading", key="robo_ativo_checkbox")
-robo_ativo = st.session_state.get("robo_ativo_checkbox", False)
+robo_ativo = st.session_state.get("robo_ativo_checkbox", False) # Obtém o valor do checkbox
 
-if robo_ativo:
+if 'robo_ativo' not in st.session_state:
+    st.session_state['robo_ativo'] = False  # Inicializa robo_ativo
+
+if st.button("Ativar Robô de Trader"):
+    st.session_state['robo_ativo'] = True
+
+if st.session_state['robo_ativo']: # Agora robo_ativo está definido
     st.success("Robô de negociação ATIVADO!")
 else:
     st.warning("Robô de negociação DESATIVADO.")
