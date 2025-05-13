@@ -69,15 +69,15 @@ if check_password():
 
     # VARIÁVEL PARA CONTROLAR A ATIVAÇÃO DO ROBÔ
     def ativar_robo():
-    st.session_state['robo_ativo'] = True
-    st.write("Botão de ativar robô foi clicado!") # Adicione este log
+        st.session_state['robo_ativo'] = True
+        st.write("Botão de ativar robô foi clicado!") # Adicione este log
 
-st.button("Ativar Robô de Trader", on_click=ativar_robo)
+    st.button("Ativar Robô de Trader", on_click=ativar_robo)
 
 if st.session_state.get('robo_ativo'):
     st.success("Robô de negociação ATIVADO!")
-else:
-    st.warning("Robô de negociação DESATIVADO.")
+    else:
+        st.warning("Robô de negociação DESATIVADO.")
     # --- VARIAVEIS GLOBAIS ---
     client_spot = None
     client_futures = None
