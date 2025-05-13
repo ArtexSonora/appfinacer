@@ -67,16 +67,17 @@ if check_password():
     st.set_page_config(layout="wide")
     st.title("📈 Trading App - Binance Spot & Futuros")
 
-def ativar_robo():
-    st.session_state['robo_ativo'] = True  # Adicionei 4 espaços de indentação aqui
-    st.write("Botão de ativar robô foi clicado!") # E aqui também
+if 'robo_ativo_checkbox' not in st.session_state:
+    st.session_state['robo_ativo_checkbox'] = False
 
-st.button("Ativar Robô de Trader", on_click=ativar_robo)
+st.sidebar.checkbox("Ativar Robô de Trading", key="robo_ativo_checkbox")
+robo_ativo = st.session_state.get("robo_ativo_checkbox", False)
 
-if st.session_state.get('robo_ativo'):
+if robo_ativo:
     st.success("Robô de negociação ATIVADO!")
 else:
     st.warning("Robô de negociação DESATIVADO.")
+
     # --- VARIAVEIS GLOBAIS ---
     client_spot = None
     client_futures = None
