@@ -20,6 +20,23 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from scipy.signal import argrelextrema
+from tensorflow import keras
+from tensorflow.keras import layers
+import io
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import classification_report
+from sklearn.utils.class_weight import compute_class_weight
+import matplotlib.pyplot as plt
+import collections
+from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.model_selection import train_test_split, TimeSeriesSplit
+from tensorflow.keras.callbacks import EarlyStopping
+import tensorflow as tf
+from tensorflow.keras.models import load_model
+from tensorflow.keras.losses import MeanSquaredError
+from tensorflow.keras.optimizers import Adam
 
 # 🔒 Defina sua senha aqui
 SENHA_CORRETA = "senha123"  # Troque por sua senha
@@ -114,6 +131,194 @@ oco_ordens_ativas = {}
 def main():
     st.title("Trading App com Estratégias")
 
+# --- API Binance ---
+api_key = st.sidebar.text_input("API Key Binance", type="password")
+api_secret = st.sidebar.text_input("Secret Key Binance", type="password")
+
+client = Client(api_key, api_secret) if api_key and api_secret else None
+
+# Função para criar o modelo
+# Função para Criar o Modelo LSTM com Múltiplas Saídas
+
+if 'modelo_treinado_ia' not in st.session_state:
+    try:
+        st.info("Carregando o modelo de IA...")
+        st.session_state['modelo_treinado_ia'] = load_model(
+            'C:/Users/WTINFO PC/PycharmProjects/PythonProject4/modelo_ia_multi_output.h5', compile=False)
+        model = st.session_state['modelo_treinado_ia']
+        model.compile(optimizer=Adam(), loss=MeanSquaredError())
+        st.success("Modelo de IA carregado com sucesso!")
+    except Exception as e:
+        st.error(f"Erro ao carregar o modelo de IA: {e}")
+        st.error(e)
+
+modelo_treinado_ia = st.session_state.get('modelo_treinado_ia')
+def criar_modelo_lstm_multi_output(num_features, num_outputs):
+    modelo = keras.Sequential([
+        layers.LSTM(100, activation='relu', input_shape=(None, num_features), return_sequences=True),
+        layers.LSTM(100, activation='relu'),
+        layers.Dense(num_outputs)  # Camada de saída com múltiplos neurônios
+    ])
+    modelo.compile(optimizer='adam', loss='mse', metrics=['mae'])  # MSE para regressão, MAE como métrica
+    return modelo
+
+# Upload de dados
+st.subheader("Carregar CSV para IA")
+uploaded_file = st.file_uploader("CSV com dados", type=["csv"])
+
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    st.dataframe(df.head())
+
+    features_list = st.multiselect("Selecionar colunas de entrada", df.columns)
+    outputs_list = st.multiselect("Selecionar colunas de saída (Open Time, Open, High, Low, Close, ...)", df.columns)
+
+    if features_list and outputs_list:
+        X = df[features_list].values
+        y = df[outputs_list].values  # Agora y tem múltiplas colunas
+
+        # Análise das Colunas de Saída
+        st.subheader("Análise das Colunas de Saída")
+        for i, output_name in enumerate(outputs_list):
+            st.write(f"**{output_name}:**")
+            st.write("  Tipo de dados:", y[:, i].dtype)
+            st.write("  Valores únicos:", np.unique(y[:, i]))
+            st.write("  Contagem de valores:", pd.Series(y[:, i]).value_counts())
+
+        # Escala dos dados (Importante para LSTMs)
+        scaler_X = StandardScaler()
+        X_scaled = scaler_X.fit_transform(X)
+        scaler_y = StandardScaler()
+        y_scaled = scaler_y.fit_transform(y)
+
+        # Criar Sequências para LSTM
+        def create_sequences(X, y, time_steps=10):
+            Xs, ys = [], []
+            for i in range(len(X) - time_steps):
+                Xs.append(X[i:(i + time_steps)])
+                ys.append(y[i + time_steps])
+            return np.array(Xs), np.array(ys)
+
+        X_seq, y_seq = create_sequences(X_scaled, y_scaled, time_steps=10)
+
+        X_train, X_test, y_train, y_test = train_test_split(X_seq, y_seq, test_size=0.2, random_state=42)
+
+        num_features = len(features_list)
+        num_outputs = len(outputs_list)
+        modelo = criar_modelo_lstm_multi_output(num_features, num_outputs)
+
+        # Treinamento
+        if st.checkbox("Treinar Modelo"):
+            historico = modelo.fit(X_train, y_train, epochs=100, batch_size=32, validation_split=0.2, verbose=1)
+            st.success("Modelo treinado com sucesso!")
+
+            # Exibir gráfico de evolução da perda
+            st.line_chart(historico.history['loss'])
+
+        # Avaliação
+        if st.checkbox("Avaliar Modelo"):
+            y_pred_scaled = modelo.predict(X_test)
+            y_pred = scaler_y.inverse_transform(y_pred_scaled)
+            y_true = scaler_y.inverse_transform(y_test)
+
+            st.subheader("Métricas de Avaliação por Saída:")
+            for i, output_name in enumerate(outputs_list):
+                mae = mean_absolute_error(y_true[:, i], y_pred[:, i])
+                r2 = r2_score(y_true[:, i], y_pred[:, i])
+                st.write(f"**{output_name}:**")
+                st.write(f"  MAE (escala original): {mae:.4f}")
+                st.write(f"  R²: {r2:.4f}")
+
+            # Validação Cruzada com TimeSeriesSplit
+            tscv = TimeSeriesSplit(n_splits=5)
+            all_mae_scores = []
+            all_r2_scores = []
+
+            for train_index, val_index in tscv.split(X_seq):
+                X_train_cv, X_val_cv = X_seq[train_index], X_seq[val_index]
+                y_train_cv, y_val_cv = y_seq[train_index], y_seq[val_index]
+
+                modelo_cv = criar_modelo_lstm_multi_output(num_features, num_outputs)
+
+                early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+                historico_cv = modelo_cv.fit(X_train_cv, y_train_cv, epochs=100, batch_size=32,
+                                            validation_data=(X_val_cv, y_val_cv),
+                                            callbacks=[early_stopping],
+                                            verbose=0)
+
+                y_pred_val_scaled = modelo_cv.predict(X_val_cv)
+                y_pred_val = scaler_y.inverse_transform(y_pred_val_scaled)
+                y_true_val = scaler_y.inverse_transform(y_val_cv)
+
+                mae_cv = []
+                r2_cv = []
+                for i in range(num_outputs):
+                    mae_cv.append(mean_absolute_error(y_true_val[:, i], y_pred_val[:, i]))
+                    r2_cv.append(r2_score(y_true_val[:, i], y_pred_val[:, i]))
+
+                all_mae_scores.append(mae_cv)
+                all_r2_scores.append(r2_cv)
+
+            avg_mae = np.mean(all_mae_scores, axis=0)
+            avg_r2 = np.mean(all_r2_scores, axis=0)
+
+            st.subheader("Média MAE Validação Cruzada por Saída:")
+            for i, output_name in enumerate(outputs_list):
+                st.write(f"**{output_name}:**")
+                st.write(f"  Média MAE: {avg_mae[i]:.4f}")
+                st.write(f"  Média R²: {avg_r2[i]:.4f}")
+
+        # Salvar Modelo
+        if st.checkbox("Salvar Modelo"):
+            nome_modelo = st.text_input("Nome do Arquivo", "modelo_ia_multi_output.h5")
+            if st.button("Salvar"):
+                modelo.save(nome_modelo)
+                st.success(f"Modelo salvo como {nome_modelo}")
+
+# --- Obter Dados da Binance ---
+st.subheader("Obter Dados Históricos da Binance")
+symbol = st.text_input("Par Ex: BTCUSDT", "BTCUSDT").upper()
+interval = st.selectbox("Intervalo", ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"], index=6)
+start_date = st.text_input("Data Início (YYYY-MM-DD)", "2023-01-01")
+end_date = st.text_input("Data Fim (opcional)", "")
+
+if st.button("Buscar Dados da Binance"):
+    if client:
+        try:
+            klines = client.get_historical_klines(symbol, interval, start_date, end_date)
+            if klines:
+                df_binance = pd.DataFrame(klines, columns=[
+                    'Open Time', 'Open', 'High', 'Low', 'Close', 'Volume',
+                    'Close Time', 'Quote Asset Volume', 'Number of Trades',
+                    'Taker Buy Base Asset Volume', 'Taker Buy Quote Asset Volume', 'Ignore'
+                ])
+                df_binance['Open Time'] = pd.to_datetime(df_binance['Open Time'], unit='ms')
+                df_binance['Close Time'] = pd.to_datetime(df_binance['Close Time'], unit='ms')
+
+                for col in ['Open', 'High', 'Low', 'Close', 'Volume',
+                            'Quote Asset Volume', 'Taker Buy Base Asset Volume',
+                            'Taker Buy Quote Asset Volume']:
+                    df_binance[col] = pd.to_numeric(df_binance[col])
+
+                st.dataframe(df_binance)
+
+                csv = io.StringIO()
+                df_binance.to_csv(csv, index=False)
+                st.download_button(
+                    label="Baixar CSV",
+                    data=csv.getvalue(),
+                    file_name=f"{symbol}_binance_data.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.error("Nenhum dado retornado.")
+        except Exception as e:
+            st.error(f"Erro ao buscar dados: {e}")
+    else:
+        st.warning("API Key e Secret inválidas ou ausentes.")
+
+
 # FUNÇÕES PARA OBTER DADOS, CALCULAR INDICADORES, PLOTAR GRÁFICO, OBTER SALDO, ETC. (RESTAURANDO AS SUAS)
 def obter_dados(par, intervalo, limite=100, mercado="Spot"):
     if not api_key or not api_secret:
@@ -146,6 +351,30 @@ def obter_dados(par, intervalo, limite=100, mercado="Spot"):
         st.error(f"Erro ao obter dados da Binance ({mercado}): {e}")
         return pd.DataFrame()
 
+def calcular_niveis_fibonacci(preco_inicial, preco_final):
+    """Calcula os níveis de retração e extensão de Fibonacci."""
+    if preco_inicial > preco_final:
+        # Tendência de baixa: preco_inicial é o topo, preco_final é o fundo
+        fibo_0 = preco_final
+        fibo_100 = preco_inicial
+    else:
+        # Tendência de alta: preco_inicial é o fundo, preco_final é o topo
+        fibo_0 = preco_inicial
+        fibo_100 = preco_final
+
+    diferenca = fibo_100 - fibo_0
+    niveis = {
+        "0.0%": fibo_100,
+        "23.6%": fibo_100 - 0.236 * diferenca,
+        "38.2%": fibo_100 - 0.382 * diferenca,
+        "50.0%": fibo_100 - 0.500 * diferenca,
+        "61.8%": fibo_100 - 0.618 * diferenca,
+        "78.6%": fibo_100 - 0.786 * diferenca,
+        "100.0%": fibo_0,
+        "127.2%": fibo_0 - 0.272 * diferenca if preco_inicial > preco_final else fibo_100 + 0.272 * diferenca,
+        "161.8%": fibo_0 - 0.618 * diferenca if preco_inicial > preco_final else fibo_100 + 0.618 * diferenca,
+    }
+    return niveis
 def calcular_indicadores(df):
     df = df.copy()
 
@@ -205,11 +434,43 @@ def calcular_indicadores(df):
         sinal = tomar_decisao(df.copy(), estrategia_selecionada, nivel_risco_selecionado)
         st.subheader(f"Sinal de Trading ({estrategia_selecionada}): {sinal}")
 
-        # ... (seu código para exibir gráficos, informações adicionais, etc.) ...
+        if estrategia_selecionada == "Fibonacci":
+            st.sidebar.subheader("⚙️ Configuração Fibonacci")
+            if not df.empty:
+                timestamps = df.index.tolist()
+                ponto_inicial_fibonacci = st.sidebar.selectbox("Selecionar Ponto Inicial", timestamps)
+                ponto_final_fibonacci = st.sidebar.selectbox("Selecionar Ponto Final", timestamps)
+                tendencia_fibonacci = st.sidebar.selectbox("Tendência (para sinal)", ["Alta", "Baixa"])
+
+                preco_inicial_fibonacci = df.loc[ponto_inicial_fibonacci]['close']
+                preco_final_fibonacci = df.loc[ponto_final_fibonacci]['close']
+
+                niveis_fibonacci = calcular_niveis_fibonacci(preco_inicial_fibonacci, preco_final_fibonacci)
+                niveis_fibonacci_plot = niveis_fibonacci  # Para plotagem
+
+                sinal_fibonacci = gerar_sinal_fibonacci(df['close'].iloc[-1], niveis_fibonacci, tendencia_fibonacci)
+                st.subheader(f"Sinal Fibonacci: {sinal_fibonacci}")
+
+                # Chamando tomar_decisao para a estratégia Fibonacci
+                sinal_decisao = tomar_decisao(df.copy(), estrategia_selecionada, nivel_risco_selecionado,
+                                              sinal_fibonacci=sinal_fibonacci)
+                st.subheader(f"Sinal de Trading ({estrategia_selecionada}): {sinal_decisao}")
+
+            else:
+                st.sidebar.warning("Dados insuficientes para Fibonacci.")
+        elif estrategia_selecionada != "Neutro":
+            df_indicadores = calcular_indicadores(df.copy())
+            sinal_decisao = tomar_decisao(df_indicadores.copy(), estrategia_selecionada, nivel_risco_selecionado)
+            st.subheader(f"Sinal de Trading ({estrategia_selecionada}): {sinal_decisao}")
+        else:
+            sinal_decisao = "Neutro"
+            st.subheader("Nenhuma estratégia selecionada.")
 
 if __name__ == "__main__":
     main()
-def plotar_grafico(df, usar_mm, usar_rsi, usar_macd, usar_bb, exibir_mm200_grafico, exibir_ema400_grafico, exibir_medias_rapidas):
+
+
+def plotar_grafico(df, usar_mm, usar_rsi, usar_macd, usar_bb, exibir_mm200_grafico, exibir_ema400_grafico, exibir_medias_rapidas, niveis_fibonacci=None):
     rows = 1 + (1 if usar_rsi and 'RSI' in df.columns else 0) + (
         1 if usar_macd and 'MACD' in df.columns and 'Signal_MACD' in df.columns and 'Histograma_MACD' in df.columns else 0)
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.03,
@@ -245,6 +506,17 @@ def plotar_grafico(df, usar_mm, usar_rsi, usar_macd, usar_bb, exibir_mm200_grafi
             fig.add_trace(go.Scatter(x=df.index, y=df['MM21'], mode='lines', name='MM21 (Visual)', line=dict(color='blue')))
         if 'EMA9' in df.columns:
             fig.add_trace(go.Scatter(x=df.index, y=df['EMA9'], mode='lines', name='EMA9', line=dict(color='green')))
+
+    # Adicionar Níveis de Fibonacci ao gráfico SE niveis_fibonacci for fornecido
+    if niveis_fibonacci:
+        for nivel, preco in niveis_fibonacci.items():
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=[preco] * len(df.index),
+                mode='lines',
+                name=f"Fib {nivel}",
+                line=dict(color='gray', dash='dash')
+            ))
 
     fig.update_layout(
         title=f"Gráfico {symbol} - {interval}",
@@ -450,6 +722,10 @@ with st.sidebar:
     modo_operacao = st.selectbox("Modo de Operação", ["Simulado", "Real"])
     tipo_mercado = st.radio("Mercado", ["Spot", "Futuros"])
 
+    usar_ia = st.checkbox("Ativar Estratégia de Rede Neural", value=False)
+    usar_confluencia_ia = False  # Inicializa como False
+
+
     st.subheader("📊 Gráfico")
     symbol = st.text_input("Símbolo (ex:BTCUSDT)", value="BTCUSDT")
     interval = st.selectbox("Intervalo do Gráfico", ["1m", "5m", "15m", "1h", "4h", "1d"], index=1)
@@ -465,9 +741,11 @@ with st.sidebar:
     exibir_medias_rapidas = st.checkbox("Exibir Médias Rápidas (MM3, MM21, EMA9)")
 
     st.subheader("🤖 Estratégia")
-    estrategia_ativa = st.selectbox("Selecione a Estratégia:",
-                                    ["MM Cruzamento", "RSI (Toque nas Extremidades)", "MACD Cruzamento",
-                                     "Bandas de Bollinger (Toque)", "Lara Reversao", "Confluência Manual", "Cruzamento MM + BB Fluxo"])
+    lista_estrategias = ["Neutro", "MM Cruzamento", "RSI (Toque nas Extremidades)", "MACD Cruzamento",
+                         "Bandas de Bollinger (Toque)", "Lara Reversao", "Confluência Manual",
+                         "Cruzamento MM + BB Fluxo", "Fibonacci", "Rede Neural"]
+    estrategia_ativa = st.selectbox("Selecione a Estratégia:", lista_estrategias)
+
     usar_confirmacao_rsi_compra = st.checkbox("Usar Confirmação RSI Compra (50-70)", value=False)
     usar_confirmacao_rsi_venda = st.sidebar.checkbox("Usar Confirmação RSI Venda (30-50)", value=False)
     usar_confirmacao_volume = st.checkbox("Confirmar entrada com volume 20% acima do candle anterior", value=False)
@@ -479,18 +757,24 @@ with st.sidebar:
     usar_confluencia_rsi = st.checkbox("Usar RSI na Confluência", value=False)
     usar_confluencia_macd = st.checkbox("Usar MACD na Confluência", value=False)
     usar_confluencia_bb = st.checkbox("Usar BB na Confluência", value=False)
-    usar_confluencia_lara = st.checkbox("Usar Padrões Lara na Confluência", value=False) # Checkbox de confluência para Lara
+    usar_confluencia_lara = st.checkbox("Usar Padrões Lara na Confluência",
+                                        value=False)  # Checkbox de confluência para Lara
 
     st.subheader("⚙️ Configurações Futuros")
     alavancagem = st.slider("Alavancagem", min_value=1, max_value=125, value=1, step=1, key='alavancagem')
 
-    nivel_risco = st.selectbox("Nível de Risco", ["Suave", "Moderado", "Profissional", "Agressivo", "Lara"]) # Adicionando "Lara"
+    nivel_risco = st.selectbox("Nível de Risco",
+                               ["Suave", "Moderado", "Profissional", "Agressivo", "Lara"])  # Adicionando "Lara"
     quantidade_trade_pct = st.number_input("Quantidade por Trade (%) da Banca", min_value=0.01, max_value=100.0,
                                            value=1.0, step=0.01)
     definir_sl_tp_manualmente = st.checkbox("Definir Stop Loss/Take Profit Manualmente")
     if definir_sl_tp_manualmente:
-        sl_padrao = float(niveis_risco[nivel_risco]["sl_tp_ratio"][0]) if nivel_risco in niveis_risco and "sl_tp_ratio" in niveis_risco[nivel_risco] else 1.0
-        tp_padrao = float(niveis_risco[nivel_risco]["sl_tp_ratio"][1]) if nivel_risco in niveis_risco and "sl_tp_ratio" in niveis_risco[nivel_risco] else 2.0
+        sl_padrao = float(
+            niveis_risco[nivel_risco]["sl_tp_ratio"][0]) if nivel_risco in niveis_risco and "sl_tp_ratio" in \
+                                                            niveis_risco[nivel_risco] else 1.0
+        tp_padrao = float(
+            niveis_risco[nivel_risco]["sl_tp_ratio"][1]) if nivel_risco in niveis_risco and "sl_tp_ratio" in \
+                                                            niveis_risco[nivel_risco] else 2.0
         stop_loss_manual = st.number_input("Stop Loss (%)", min_value=0.01, step=0.01, value=sl_padrao)
         take_profit_manual = st.number_input("Take Profit (%)", min_value=0.01, step=0.01, value=tp_padrao)
     else:
@@ -518,7 +802,7 @@ with st.sidebar:
         st.markdown("- Desvio Padrão: 2")
     if estrategia_ativa == "Lara Reversao":
         st.markdown("**Padrões de Reversão de Lara:**")
-        st.markdown("- Ordem para picos/fundos: 5 (padrão)") # Informando o parâmetro
+        st.markdown("- Ordem para picos/fundos: 5 (padrão)")  # Informando o parâmetro
         st.markdown("- Tolerância de altura (Dobro Topo/Fundo): 0.5% (padrão)")
         st.markdown("- Tolerância de distância (Dobro Topo/Fundo): 10 candles (padrão)")
         st.markdown("- Tolerância de altura (Ombro/Cabeça): 2% (padrão)")
@@ -527,6 +811,19 @@ with st.sidebar:
         st.markdown("- Tolerância de distância (Triplo Topo/Fundo): 20 candles (padrão)")
         st.markdown("- Tolerância de ângulo (Cunha): 0.1 (padrão)")
 
+        if usar_ia:
+            st.subheader("Configurações da Rede Neural")
+            df_ia_local = st.session_state.get('df_ia')
+            if df_ia_local is not None and 'columns' in dir(df_ia_local):
+                colunas_disponiveis_ia = df_ia_local.columns
+                colunas_features_ia = st.multiselect("Features (Entradas) para a IA", colunas_disponiveis_ia)
+                coluna_alvo_ia = st.selectbox("Alvo (Saída) para a IA", colunas_disponiveis_ia)
+                sua_saida_eh_classificacao_ia = st.checkbox("Prever Classificação (Alta/Baixa)?", value=True)
+                usar_confluencia_ia = st.checkbox("Usar IA em Confluência com Outras Estratégias", value=True)
+            else:
+                st.warning("Por favor, carregue os dados para a IA na seção correspondente.")
+        else:
+            usar_confluencia_ia = False
 
 # FUNÇÕES PARA GERAR SINAIS DE ESTRATÉGIA (MANTENDO AS SUAS)
 def gerar_sinal_mm_cruzamento(df, rapida, lenta):
@@ -583,6 +880,25 @@ def verificar_divergencia_rsi(df):
 
     return "Neutro"
 
+def aplicar_confirmacao_rsi(sinal, df, usar_confirmacao_compra, usar_confirmacao_venda):
+    if 'RSI' not in df.columns:
+        return sinal  # RSI não disponível, retorna o sinal original
+
+    rsi_atual = df['RSI'].iloc[-1]
+    sinal_final = sinal
+
+    if sinal == "Compra":
+        if usar_confirmacao_compra:
+            if not (50 < rsi_atual < 70):
+                st.info(f"Sinal de compra do RSI ({rsi_atual:.2f}), mas fora da zona de confirmação (50-70).")
+                sinal_final = "Neutro"
+    elif sinal == "Venda":
+        if usar_confirmacao_venda:
+            if not (30 < rsi_atual < 50):
+                st.info(f"Sinal de venda do RSI ({rsi_atual:.2f}), mas fora da zona de confirmação (30-50).")
+                sinal_final = "Neutro"
+
+    return sinal_final
 def gerar_sinal_macd_cruzamento(df):
     if not 'MACD' in df.columns or not 'Signal_MACD' in df.columns:
         return "Neutro"
@@ -751,6 +1067,36 @@ def gerar_sinal_mm_bb_fluxo(df):
         sinal = "Compra"
     elif cruzamento_baixa_sequencial and banda_inferior_baixa_atual and expansao_bb_atual and medias_apontando_baixo_atual and preco_abaixo_medias_atual:
         sinal = "Venda"
+
+    return sinal
+
+def gerar_sinal_fibonacci(preco_atual, niveis_fibonacci, tendencia):
+    """Gera um sinal de negociação baseado nos níveis de Fibonacci e na tendência."""
+    tolerancia = 0.005 * (max(niveis_fibonacci.values()) - min(niveis_fibonacci.values())) # 0.5% de tolerância
+
+    sinal = "Neutro"
+
+    if tendencia == "Alta":
+        # Procurar por sinais de compra perto dos níveis de retração (abaixo de 100%)
+        if (niveis_fibonacci["38.2%"] * (1 - tolerancia) < preco_atual < niveis_fibonacci["38.2%"] * (1 + tolerancia)):
+            sinal = "Compra (Retração 38.2%)"
+        elif (niveis_fibonacci["50.0%"] * (1 - tolerancia) < preco_atual < niveis_fibonacci["50.0%"] * (1 + tolerancia)):
+            sinal = "Compra (Retração 50.0%)"
+        elif (niveis_fibonacci["61.8%"] * (1 - tolerancia) < preco_atual < niveis_fibonacci["61.8%"] * (1 + tolerancia)):
+            sinal = "Compra (Retração 61.8%)"
+        elif (niveis_fibonacci["78.6%"] * (1 - tolerancia) < preco_atual < niveis_fibonacci["78.6%"] * (1 + tolerancia)):
+            sinal = "Compra (Retração 78.6%)"
+
+    elif tendencia == "Baixa":
+        # Procurar por sinais de venda perto dos níveis de retração (acima de 0%)
+        if (niveis_fibonacci["23.6%"] * (1 - tolerancia) < preco_atual < niveis_fibonacci["23.6%"] * (1 + tolerancia)):
+            sinal = "Venda (Retração 23.6%)"
+        elif (niveis_fibonacci["38.2%"] * (1 - tolerancia) < preco_atual < niveis_fibonacci["38.2%"] * (1 + tolerancia)):
+            sinal = "Venda (Retração 38.2%)"
+        elif (niveis_fibonacci["50.0%"] * (1 - tolerancia) < preco_atual < niveis_fibonacci["50.0%"] * (1 + tolerancia)):
+            sinal = "Venda (Retração 50.0%)"
+        elif (niveis_fibonacci["61.8%"] * (1 - tolerancia) < preco_atual < niveis_fibonacci["61.8%"] * (1 + tolerancia)):
+            sinal = "Venda (Retração 61.8%)"
 
     return sinal
 
@@ -1073,7 +1419,7 @@ def ajustar_stop_loss_trailing_candles(symbol, preco_entrada, stop_loss_atual, t
     return novo_stop_loss
 
 # FUNÇÃO PRINCIPAL PARA TOMAR DECISÕES DE TRADING (MANTENDO A SUA)
-def tomar_decisao(df, estrategia, nivel_risco):
+def tomar_decisao(df, estrategia, nivel_risco, usar_ia, usar_confluencia_ia, sinal_fibonacci=None):
     config = niveis_risco[nivel_risco]
     sinal_final = "Neutro"
     sinais = []
@@ -1099,53 +1445,30 @@ def tomar_decisao(df, estrategia, nivel_risco):
                 sinais.append("Neutro")  # Ou talvez não adicionar nada à lista de sinais
         elif not usar_confluencia_manual:  # Se não estiver em confluência manual, usa o sinal individual
             sinal_final = sinais_mm
-    if estrategia == "RSI (Toque nas Extremidades)" and usar_rsi:
+    elif estrategia == "RSI (Toque nas Extremidades)" and usar_rsi:
         sinal_extremidades = gerar_sinal_rsi_extremidades(df, config['rsi_limites'][0], config['rsi_limites'][1])
         sinal_divergencia = verificar_divergencia_rsi(df)
-        sinais_rsi = sinal_divergencia if sinal_divergencia != "Neutro" else sinal_extremidades
+        sinais_rsi_base = sinal_divergencia if sinal_divergencia != "Neutro" else sinal_extremidades
+        sinal_final = sinais_rsi_base  # Inicializa o sinal final com o sinal base
         if usar_confluencia_rsi:
-            sinais.append(sinais_rsi)
+            sinais.append(sinal_final)
         elif not usar_confluencia_manual:
-            sinal_final = sinais_rsi
-            if estrategia == "RSI" and usar_rsi:
-                rsi_atual = df['RSI'].iloc[-1]
-                sinal_rsi = "Neutro"
+            pass  # O sinal final já está definido
 
-                if rsi_atual < config['rsi_sobrevenda']:
-                    sinal_rsi = "Compra"
-                elif rsi_atual > config['rsi_sobrecompra']:
-                    sinal_rsi = "Venda"
-
-                sinal_final_rsi = "Neutro"
-
-                if sinal_rsi == "Compra":
-                    if usar_confirmacao_rsi_compra:  # Verifica se o checkbox está marcado para compra
-                        if 50 < rsi_atual < 70:
-                            sinal_final_rsi = "Compra"
-                        else:
-                            st.info(
-                                f"Sinal de compra do RSI ({rsi_atual:.2f}), mas fora da zona de confirmação (50-70).")
-                            sinal_final_rsi = "Neutro"  # Se fora da zona, o sinal é neutro
-                    else:
-                        sinal_final_rsi = "Compra"  # Se o checkbox não estiver marcado, compra no sinal de sobrevenda
-                elif sinal_rsi == "Venda":
-                    if usar_confirmacao_rsi_venda:  # Verifica se o checkbox está marcado para venda
-                        if 30 < rsi_atual < 50:
-                            sinal_final_rsi = "Venda"
-                        else:
-                            st.info(
-                                f"Sinal de venda do RSI ({rsi_atual:.2f}), mas fora da zona de confirmação (30-50).")
-                            sinal_final_rsi = "Neutro"  # Se fora da zona, o sinal é neutro
-                    else:
-                        sinal_final_rsi = "Venda"  # Se o checkbox não estiver marcado, vende no sinal de sobrecompra
-                else:
-                    sinal_final_rsi = "Neutro"
-
-                if usar_confluencia_rsi:
-                    if sinal_final_rsi != "Neutro":
-                        sinais.append(sinal_final_rsi)
-                elif not usar_confluencia_manual:
-                    sinal_final = sinal_final_rsi
+    elif estrategia == "RSI" and usar_rsi:
+        rsi_atual = df['RSI'].iloc[-1]
+        sinal_rsi_base = "Neutro"
+        if rsi_atual < config['rsi_sobrevenda']:
+            sinal_rsi_base = "Compra"
+        elif rsi_atual > config['rsi_sobrecompra']:
+            sinal_rsi_base = "Venda"
+        sinal_final = aplicar_confirmacao_rsi(sinal_rsi_base, df, usar_confirmacao_rsi_compra,
+                                              usar_confirmacao_rsi_venda)
+        if usar_confluencia_rsi:
+            if sinal_final != "Neutro":
+                sinais.append(sinal_final)
+        elif not usar_confluencia_manual:
+            pass  # O sinal final já está definido
     if estrategia == "MACD Cruzamento" and usar_macd:
         sinal_cruzamento = gerar_sinal_macd_cruzamento(df)
         sinal_divergencia_macd = verificar_divergencia_macd(df)
@@ -1248,6 +1571,8 @@ def tomar_decisao(df, estrategia, nivel_risco):
     elif estrategia == "Cruzamento MM + BB Fluxo":
             sinal_mm_bb_fluxo = gerar_sinal_mm_bb_fluxo(df)
             sinal_final = sinal_mm_bb_fluxo
+    elif estrategia == "Fibonacci" and sinal_fibonacci:
+        sinal_final = sinal_fibonacci
 
     # --- Aplicar Filtros Globais ---
     mm200_atual = df['MM200'].iloc[-1] if 'MM200' in df.columns else None
@@ -1266,8 +1591,58 @@ def tomar_decisao(df, estrategia, nivel_risco):
             elif sinal_final == "Venda" and not (preco_atual < ema400_atual):
                 sinal_final = "Neutro"
 
+     #FUNÇÃO DE REDE NEURAL
+
+    sinal_ia = "Neutro (IA)"  # Inicializa o sinal da IA
+    if usar_ia and 'modelo_treinado_ia' in locals() and 'colunas_features_ia' in locals() and colunas_features_ia and 'coluna_alvo_ia' in locals() and coluna_alvo_ia:
+        try:
+            features_para_ia_previsao = df[colunas_features_ia].iloc[[-1]].values
+            previsao_ia = modelo_treinado_ia.predict(features_para_ia_previsao, verbose=0)[0][0]
+            st.write(f"Previsão da Rede Neural: {previsao_ia:.4f}")
+
+            if sua_saida_eh_classificacao_ia:
+                if previsao_ia > 0.7:
+                    sinal_ia = "Compra (IA)"
+                elif previsao_ia < 0.3:
+                    sinal_ia = "Venda (IA)"
+            else:  # Regressão - adapte os limiares
+                if previsao_ia > 0.01:
+                    sinal_ia = "Compra (IA)"
+                elif previsao_ia < -0.01:
+                    sinal_ia = "Venda (IA)"
+
+            if estrategia == "Rede Neural":
+                sinal_final = f"{sinal_ia} (Principal)"
+            else:
+                sinais.append(sinal_ia)
+
+        except Exception as e:
+            st.error(f"Erro ao usar a Rede Neural para previsão: {e}")
+            sinal_ia = "Neutro (IA)"
+
+    # Lógica de Confluência
+    sinais_ativos = [s for s in sinais if s != "Neutro" and "(IA)" not in s]
+    sinais_ia_ativos = [s for s in sinais if "(IA)" in s and s != "Neutro (IA)"]
+
+    if estrategia != "Rede Neural" and usar_ia and usar_confluencia_ia:
+        if sinais_ativos and sinais_ia_ativos:
+            # Lógica de confluência com a IA
+            if any("Compra" in s for s in sinais_ativos) and any("Compra" in s for s in sinais_ia_ativos):
+                sinal_final = "Compra (Confluência com IA)"
+            elif any("Venda" in s for s in sinais_ativos) and any("Venda" in s for s in sinais_ia_ativos):
+                sinal_final = "Venda (Confluência com IA)"
+        elif not sinais_ativos and sinais_ia_ativos:
+            sinal_final = f"{sinais_ia_ativos[-1]} (Autônoma)"
+        elif sinais_ativos:
+            sinal_final = sinais_ativos[-1]
+    elif estrategia == "Rede Neural" and usar_ia:
+        sinal_final = f"{sinal_ia} (Principal)"
+    elif estrategia != "Rede Neural" and sinais_ativos and not usar_ia:
+        sinal_final = sinais_ativos[-1]
+
         # --- Aplicar Confirmação de Volume ---
     sinal_final = confirmar_sinal_com_volume_candle_anterior(df, sinal_final)
+
     return sinal_final
 
 def calcular_sl_tp(preco_entrada, nivel_risco, manual_sl=None, manual_tp=None, tipo_ordem="COMPRA"):
@@ -1727,7 +2102,7 @@ if not df.empty:
 
         st.markdown("---")
         st.subheader("🤖 Estratégia (Automático)")
-        sinal = tomar_decisao(df_indicadores.copy(), estrategia_ativa, nivel_risco)
+        sinal = tomar_decisao(df_indicadores.copy(), estrategia_ativa, nivel_risco, usar_ia, usar_confluencia_ia)
         st.info(f"Sinal atual da estratégia ({estrategia_ativa}, {nivel_risco}): **{sinal}**")
 
         oco_ativo_auto = st.checkbox("Usar OCO (Automático)", value=True)
@@ -1811,17 +2186,9 @@ st.markdown("---")
 st.caption("App de trading com integração Binance (Spot & Futuros) desenvolvido com Streamlit.")
 
 # Atualização de página a cada N segundos (opcional)
-tempo_atualizacao = 45  # Atualizar a cada 30 segundos
+tempo_atualizacao = 30  # Atualizar a cada 30 segundos
 time.sleep(tempo_atualizacao)
 st.rerun()
-
-
-
-
-
-
-
-
 
 
 

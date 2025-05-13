@@ -1,0 +1,2 @@
+timestamp,symbol,side,price,quantity,stop_loss,take_profit,oco,modo
+2025-05-10 20:14:43,BATUSDT,BUY,0.1678,34.7,0.166122,0.171156,True,Simulado
