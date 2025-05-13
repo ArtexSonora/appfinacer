@@ -133,10 +133,7 @@ def main():
     st.title("Trading App com Estratégias")
 
 # --- API Binance ---
-api_key = st.sidebar.text_input("API Key Binance", type="password")
-api_secret = st.sidebar.text_input("Secret Key Binance", type="password")
 
-client = Client(api_key, api_secret) if api_key and api_secret else None
 
 # Função para criar o modelo
 # Função para Criar o Modelo LSTM com Múltiplas Saídas
