@@ -144,7 +144,7 @@ if 'modelo_treinado_ia' not in st.session_state:
     try:
         st.info("Carregando o modelo de IA...")
         st.session_state['modelo_treinado_ia'] = load_model(
-            'C:/Users/WTINFO PC/PycharmProjects/PythonProject4/modelo_ia_multi_output.h5', compile=False)
+            '/root/appfinacer/modelo_ia_multi_output.h5', compile=False)
         model = st.session_state['modelo_treinado_ia']
         model.compile(optimizer=Adam(), loss=MeanSquaredError())
         st.success("Modelo de IA carregado com sucesso!")
