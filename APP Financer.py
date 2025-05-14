@@ -746,10 +746,6 @@ with st.sidebar:
     modo_operacao = st.selectbox("Modo de Operação", ["Simulado", "Real"])
     tipo_mercado = st.radio("Mercado", ["Spot", "Futuros"])
 
-    usar_ia = st.checkbox("Ativar Estratégia de Rede Neural", value=False)
-    usar_confluencia_ia = False  # Inicializa como False
-
-
     st.subheader("📊 Gráfico")
     symbol = st.text_input("Símbolo (ex:BTCUSDT)", value="BTCUSDT")
     interval = st.selectbox("Intervalo do Gráfico", ["1m", "5m", "15m", "1h", "4h", "1d"], index=1)
