@@ -67,8 +67,31 @@ if check_password():
     st.set_page_config(layout="wide")
     st.title("📈 Trading App - Binance Spot & Futuros")
 
-# VARIÁVEL PARA CONTROLAR A ATIVAÇÃO DO ROBÔ
+    # VARIÁVEL PARA CONTROLAR A ATIVAÇÃO DO ROBÔ
     robo_ativo = st.sidebar.checkbox("Ativar Robô de Trading", value=False)
+
+    if robo_ativo:
+        st.sidebar.success("✅ Robô de Trading ATIVADO!")
+    else:
+        st.sidebar.warning("❌ Robô de Trading DESATIVADO.")
+
+    usar_ia = st.checkbox("Ativar Estratégia de Rede Neural", value=False)
+    usar_confluencia_ia = False  # Inicializa como False (boa prática)
+
+    if usar_ia:
+        st.info("🧠 Estratégia de IA: Rede Neural Ativa (Confluência)")
+        usar_confluencia_ia = True  # Define como True quando o checkbox está marcado
+    else:
+        st.info("🧠 Estratégia de IA: Desativada")  # Opcional: Informa que a IA está desativada
+
+    if usar_confluencia_ia and robo_ativo:
+        # Lógica para executar a estratégia de IA
+        st.write("Executando estratégia de IA...")
+    elif robo_ativo:
+        # Lógica para executar a estratégia padrão (sem IA)
+        st.write("Executando estratégia padrão...")
+    else:
+        st.write("Robô de Trading desativado.")
 
     # --- VARIAVEIS GLOBAIS ---
     client_spot = None
