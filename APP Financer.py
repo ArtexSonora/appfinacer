@@ -2207,21 +2207,14 @@ st.caption("App de trading com integração Binance (Spot & Futuros) desenvolvid
 
 # Função para nao deixar a pagina adormecer 
 
-def manter_app_ativo(delay_segundos=20):
-    if "toggle_fake" not in st.session_state:
-        st.session_state.toggle_fake = False
+def manter_ativo():
+    # Simula uma pequena interação para manter o app vivo
+    st.session_state._keepalive = not st.session_state.get("_keepalive", False)
+    st.empty()
+    time.sleep(0.1)
 
-    # Alterna o estado interno
-    st.session_state.toggle_fake = not st.session_state.toggle_fake
-
-    # Aguarda o tempo definido
-    time.sleep(delay_segundos)
-
-    # Recarrega o app para simular atividade
-    st.experimental_rerun()
-
-# 👇 Chame essa função no final do app
-manter_app_ativo(delay_segundos=20)
+# Coloque isso no final do seu código
+manter_ativo()
 
 # Atualização de página a cada N segundos (opcional)
 tempo_atualizacao = 40  # Atualizar a cada 40 segundos
