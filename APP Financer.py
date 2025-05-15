@@ -2223,7 +2223,10 @@ def manter_app_ativo(delay_segundos=20):
 # 👇 Chame essa função no final do app
 manter_app_ativo(delay_segundos=20)
 
-
+# Atualização de página a cada N segundos (opcional)
+tempo_atualizacao = 40  # Atualizar a cada 40 segundos
+time.sleep(tempo_atualizacao)
+st.rerun()
 
 
 
