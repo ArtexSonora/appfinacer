@@ -2205,10 +2205,23 @@ else:
 st.markdown("---")
 st.caption("App de trading com integração Binance (Spot & Futuros) desenvolvido com Streamlit.")
 
-# Atualização de página a cada N segundos (opcional)
-tempo_atualizacao = 30  # Atualizar a cada 30 segundos
-time.sleep(tempo_atualizacao)
-st.rerun()
+# Função para nao deixar a pagina adormecer 
+
+def manter_app_ativo(delay_segundos=20):
+    if "toggle_fake" not in st.session_state:
+        st.session_state.toggle_fake = False
+
+    # Alterna o estado interno
+    st.session_state.toggle_fake = not st.session_state.toggle_fake
+
+    # Aguarda o tempo definido
+    time.sleep(delay_segundos)
+
+    # Recarrega o app para simular atividade
+    st.experimental_rerun()
+
+# 👇 Chame essa função no final do app
+manter_app_ativo(delay_segundos=20)
 
 
 
