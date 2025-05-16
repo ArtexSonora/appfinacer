@@ -293,12 +293,31 @@ if uploaded_file:
                 st.write(f"  Média MAE: {avg_mae[i]:.4f}")
                 st.write(f"  Média R²: {avg_r2[i]:.4f}")
 
-        # Salvar Modelo
-        if st.checkbox("Salvar Modelo"):
-            nome_modelo = st.text_input("Nome do Arquivo", "modelo_ia_multi_output.h5")
-            if st.button("Salvar"):
-                modelo.save(nome_modelo)
-                st.success(f"Modelo salvo como {nome_modelo}")
+# --- SEÇÃO DE SALVAR MODELO COM BOTÃO INDEPENDENTE ---
+st.subheader("💾 Salvar Modelo Treinado")
+
+# Campo de texto para o nome do arquivo com uma chave única
+nome_modelo_salvar = st.text_input(
+    "Nome do arquivo para salvar o modelo:",
+    "modelo_ia_avancado_treinado.h5",
+    key="save_model_filename" # Chave única para o widget
+)
+
+# Botão para salvar o modelo
+if st.button("Salvar Modelo Agora"):
+    # Verifica se o modelo existe no st.session_state
+    if 'modelo_treinado_ia' in st.session_state and st.session_state['modelo_treinado_ia'] is not None:
+        try:
+            # Acessa o modelo armazenado
+            modelo_a_salvar = st.session_state['modelo_treinado_ia']
+            modelo_a_salvar.save(nome_modelo_salvar)
+            st.success(f"Modelo salvo com sucesso como `{nome_modelo_salvar}`!")
+        except Exception as e:
+            st.error(f"Erro ao salvar o modelo: {e}")
+            st.warning("Verifique se o modelo foi treinado ou carregado corretamente e se o nome do arquivo é válido.")
+    else:
+        st.warning("Nenhum modelo disponível para salvar. Por favor, treine ou carregue um modelo primeiro.")
+# --- FIM DA SEÇÃO SALVAR MODELO ---
 
 # --- Obter Dados da Binance ---
 st.subheader("Obter Dados Históricos da Binance")
